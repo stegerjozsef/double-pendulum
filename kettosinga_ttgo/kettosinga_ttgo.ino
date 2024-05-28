@@ -19,7 +19,7 @@
 #define REFRESH_DISPLAY 1000
 #define REFRESH_BATTERY 5000
 #define REFRESH_ANGLE 25
-#define HEARTBEAT_TIMEOUT 1000
+#define HEARTBEAT_TIMEOUT 5000
 //TODO implement #define FADE_MESSAGE 15000
 #define BUTTON_RESOLUTION 500
 #define VERBOSE
@@ -305,6 +305,7 @@ void server(void* pvParameters) {
 
   // Set WiFi to station mode and disconnect from an AP if it was previously connected
   WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);         // make sure not to sore config in flash
   WiFi.disconnect(true);          // delete old config
   delay(1000);
   WiFi.onEvent(WiFiStationConnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_CONNECTED);
@@ -313,10 +314,11 @@ void server(void* pvParameters) {
   WiFi.begin(ssid, password);
 
   // packet structure
-  // id
   // timestamp
+  // id
+  // voltage
   // list of samples
-  unsigned int bufsize = sizeof(unsigned long)+sizeof(unsigned long)+SAMPLES_PER_PACKET*sizeof(sample_t);
+  unsigned int bufsize = sizeof(unsigned long)+sizeof(unsigned long)+sizeof(int)+SAMPLES_PER_PACKET*sizeof(sample_t);
   char incomingPacket[255];                // buffer for incoming packets
   char outgoingPacket[bufsize];            // buffer for outgoing packets
   unsigned long pcnt = 0;                  // packet counter
@@ -341,6 +343,8 @@ void server(void* pvParameters) {
       //TODO parse received command
       if (strcmp(incomingPacket, "start") == 0) {
         consumer_ready = true;
+        sprintf(disp_message, "client at %d", Udp.remotePort());
+        message("client at %d", Udp.remotePort());
         display_changed = true;
         lastHeartbeatTime = millis();
       } else if (strcmp(incomingPacket, "ping") == 0) {
@@ -361,6 +365,8 @@ void server(void* pvParameters) {
           ptr += sizeof(unsigned long);
           memcpy((void *)ptr, (void *)&pcnt, sizeof(unsigned long));   // store packet id
           ptr += sizeof(unsigned long);
+          memcpy((void *)ptr, (void *)&voltage, sizeof(unsigned long));// store battery voltage
+          ptr += sizeof(unsigned long);
         }
         memcpy((void *)ptr, (void *)&sample, sizeof(sample_t));        // store this sample
         ptr += sizeof(sample_t);
@@ -376,7 +382,7 @@ void server(void* pvParameters) {
       }
     }
 
-    if (lastHeartbeatTime - millis() > HEARTBEAT_TIMEOUT) {           // remote party disappeared
+    if (consumer_ready && (millis() - lastHeartbeatTime > HEARTBEAT_TIMEOUT)) {           // remote party disappeared
       consumer_ready = false;
       unsigned int drp = 0;
       while (xQueueReceive(queue, (void *)&sample, (TickType_t) 0) == pdPASS) {
