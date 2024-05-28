@@ -11,7 +11,7 @@ microcontroller based physical experiment
 
 # software requirements
 
-The project was compiled and uploaded Arduino IDE (version 2.3.2).
+The project was compiled and uploaded with the Arduino IDE (version 2.3.2).
 The following extra libraries were used:
 
 * `AS5600` (version 0.6.1)
