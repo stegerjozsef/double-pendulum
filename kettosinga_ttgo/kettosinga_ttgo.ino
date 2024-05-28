@@ -23,7 +23,7 @@
 //TODO implement #define FADE_MESSAGE 15000
 #define BUTTON_RESOLUTION 500
 #define VERBOSE
-//#define BUTTONS_ENABLED
+#define BUTTONS_ENABLED
 
 // define pinout
 #define BUTTON1PIN 35
@@ -62,12 +62,12 @@ struct sensor_t {
 // global variables
 const char* ssid = "XXXXXXXXXX";            // WiFi ESSID
 const char* password = "XXXXXXXXXX";        // WiFi secret
+TFT_eSPI tft = TFT_eSPI();                  // the display
 unsigned int localUdpPort = 4210;           // port to listen on
 int voltage = -1;                           // last battery voltage
 QueueHandle_t queue;                        // inter task queue handler
 QueueHandle_t msg_queue;                    // inter task queue handler for serial line messages
-volatile uint32_t button_display_last = 0;  // when button interrupt was last handled
-volatile uint32_t button_measure_last = 0;  // when button interrupt was last handled
+volatile uint32_t button_last = 0;          // when button interrupt was last handled
 sensor_t disp_sensor[2];                    // store sensor infor to be displayed
 TaskHandle_t Task_measure_angle;            // angle measurement task handler
 TaskHandle_t Task_display;                  // display task handler
@@ -96,45 +96,18 @@ void fatal(const char * message) {
   }
 }
 
-void IRAM_ATTR btn_display() {
-  if (millis() - button_display_last > BUTTON_RESOLUTION) {
-    message("handling button 1 pressed");
-    button_display_last = millis();
-    start_stop_display();
+void IRAM_ATTR hibernate() {
+  if (button_last == 0) {
+    message("button press hallucinated");
+    button_last = millis();
+    return;
+  }
+  if (millis() - button_last > BUTTON_RESOLUTION) {
+    tft.writecommand(TFT_DISPOFF); // Turn off display
+    tft.writecommand(TFT_SLPIN);   // Sleep in mode for the display
+    esp_deep_sleep_start();
   }
 }
-
-void IRAM_ATTR btn_measurement() {
-  if (millis() - button_measure_last > BUTTON_RESOLUTION) {
-    message("handling button 2 pressed");
-    button_measure_last = millis();
-    start_stop_measurement();
-  }
-}
-
-void start_stop_display() {
-  negate_task_state(Task_display);
-}
-
-void start_stop_measurement() {
-  consumer_ready = !consumer_ready;
-}
-
-/*void negate_task_state(TaskHandle_t &task) {
-  TaskStatus_t details;
-  configASSERT(task);
-  //eTaskState state = eTaskGetState(task);
-  vTaskGetInfo(task, &details, pdTRUE, eInvalid);//FIXME details also holds state???
-  if (details.eCurrentState == eSuspended) {
-    Serial.printf("task %s was suspended, resuming...\n", details.pcTaskName);
-    vTaskResume(task);
-  } else if (details.eCurrentState == eRunning || details.eCurrentState == eBlocked) {
-    Serial.printf("task %s was running, suspending...\n", details.pcTaskName);
-    vTaskSuspend(task);
-  } else {
-    Serial.printf("ERROR at %d task %s is in state %s, unhandled situation", millis(), details.pcTaskName, details.eCurrentState);
-  }
-}*/
 
 eTaskState negate_task_state(TaskHandle_t &task) {
   configASSERT(task);
@@ -211,8 +184,8 @@ void setup() {
   xTaskCreatePinnedToCore(server, "T_networking", 10000, NULL, 1, &Task_udp, 1);
   // handle button events
 #ifdef BUTTONS_ENABLED
-  attachInterrupt(BUTTON1PIN, btn_display, FALLING);
-  attachInterrupt(BUTTON2PIN, btn_measurement, FALLING);
+  attachInterrupt(BUTTON2PIN, hibernate, FALLING);        // register hibernation function
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_35, 0);           // register wakeup button
 #endif
 
 }
@@ -401,7 +374,6 @@ void server(void* pvParameters) {
 void refresh_display(void* pvParameters) {
   message("Refresh display task running on core %d", xPortGetCoreID());
   disp_message[0] = '\0';
-  TFT_eSPI tft = TFT_eSPI();
   tft.init();
   tft.setRotation(3);
   tft.fillScreen(TFT_BLACK);
